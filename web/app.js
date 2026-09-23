@@ -5,7 +5,7 @@ const $$ = s => [...document.querySelectorAll(s)];
 const PAGE = 150;
 const COUNTRY = {RU: "Россия", BY: "Беларусь"};
 const SOCIAL = {telegram: "TG", whatsapp: "WA", viber: "Viber", vk: "VK", instagram: "IG", ok: "OK"};
-const LS_FORM = "leadgen.form.v2", LS_JOB = "leadgen.job.v1", LS_TAB = "leadgen.tab.v1";
+const LS_FORM = "leadgen.form.v2", LS_JOB = "leadgen.job.v1", LS_TAB = "leadgen.tab.v1", LS_THEME = "leadgen.theme";
 
 const S = {
   started: false, meta: null, caps: {}, user: "", auth: false, balance: null,
@@ -64,6 +64,7 @@ $("#loginForm").addEventListener("submit", async e => {
 });
 
 async function boot(){
+  initTheme();
   let me;
   try { me = await api("/api/me"); }
   catch (err) { document.body.innerHTML = `<p style="padding:20px">Сервер не отвечает: ${esc(err.message)}. Запусти <code>python app.py</code>.</p>`; return; }
@@ -85,6 +86,31 @@ async function start(){
   const cur = await api("/api/jobs/current").catch(() => ({}));
   const last = cur.id || lsGet(LS_JOB);
   if (last) attach(last, true);
+}
+
+/* Тема: «Авто» следует за системой, выбор запоминается. Первичная установка —
+   в <head>, здесь только переключение и подсветка активной кнопки. */
+function applyTheme(mode){
+  const dark = mode === "dark" || (mode !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  for (const b of $$("#theme button")) b.classList.toggle("on", b.dataset.themeSet === mode);
+}
+
+function initTheme(){
+  let mode = "auto";
+  try { mode = new URLSearchParams(location.search).get("theme") || localStorage.getItem(LS_THEME) || "auto"; } catch {}
+  applyTheme(mode);
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    let m = "auto";
+    try { m = localStorage.getItem(LS_THEME) || "auto"; } catch {}
+    if (m === "auto") applyTheme("auto");
+  });
+  $("#theme").addEventListener("click", e => {
+    const b = e.target.closest("[data-theme-set]");
+    if (!b) return;
+    try { localStorage.setItem(LS_THEME, b.dataset.themeSet); } catch {}
+    applyTheme(b.dataset.themeSet);
+  });
 }
 
 function renderHeader(){

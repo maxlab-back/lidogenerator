@@ -5,6 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Лидогенератор</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>">
+<script>
+  /* Ставим тему до первой отрисовки, иначе тёмный интерфейс мигнёт белым. */
+  (function () {
+    try {
+      var q = new URLSearchParams(location.search).get("theme");
+      var t = q || localStorage.getItem("leadgen.theme") || "auto";
+      var dark = t === "dark" || (t !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+    } catch (e) { document.documentElement.dataset.theme = "light"; }
+  })();
+</script>
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
@@ -33,6 +44,11 @@
   </nav>
   <div class="hchips" id="chips"></div>
   <button class="btn sm" id="btnHistory">История</button>
+  <div class="theme" id="theme" role="group" aria-label="Тема оформления">
+    <button data-theme-set="auto" title="Как в системе">Авто</button>
+    <button data-theme-set="light" title="Светлая тема" aria-label="Светлая тема">☀</button>
+    <button data-theme-set="dark" title="Тёмная тема" aria-label="Тёмная тема">☾</button>
+  </div>
   <span class="userbox" id="userBox"></span>
 </header>
 <div class="pop panel" id="historyPop" hidden></div>

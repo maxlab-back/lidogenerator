@@ -1,8 +1,12 @@
+/* Палитра: строгий графит и золото — как на бирже. Золото работает акцентом
+   (кнопки, активное, выбранное), а не фоном для текста: на светлой теме золотой
+   текст нечитаем, поэтому «поверхность» и «текст акцента» — разные переменные. */
 :root{
-  --bg:#f4f5f7; --panel:#fff; --line:#e2e5ea; --line-strong:#cfd4dc; --text:#15171c; --muted:#5a6272;
-  --accent:#2563eb; --accent-ink:#fff; --accent-weak:#e8efff; --ok:#0f7a55; --ok-weak:#e3f5ec;
-  --mid:#8a5a00; --mid-weak:#fbf1d9; --low:#646b78; --low-weak:#eceef1; --bad:#b42318; --bad-weak:#fdecea;
-  --chip:#eef0f4; --hover:#f7f9fb; --focus:rgba(37,99,235,.25);
+  --bg:#f5f5f5; --panel:#fff; --line:#eaecef; --line-strong:#d3d8de; --text:#1e2329; --muted:#616a75;
+  --accent:#8a6100; --accent-surface:#f0b90b; --accent-ink:#1e2329; --accent-weak:#fdf4d9;
+  --ok:#0b7a55; --ok-weak:#e1f5ec; --mid:#8a6100; --mid-weak:#fdf1d5;
+  --low:#646b78; --low-weak:#eceef1; --bad:#c0293c; --bad-weak:#fdeaed;
+  --chip:#eef0f2; --hover:#f7f8fa; --focus:rgba(240,185,11,.35);
   --radius:10px; --shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.07);
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 }
@@ -12,10 +16,11 @@
    пятно. Приглушённый текст намеренно светлее, чем в светлой теме: на тёмном фоне
    тонкие серые буквы «выцветают» сильнее. */
 :root[data-theme="dark"]{
-  --bg:#0b0e13; --panel:#171b23; --line:#2a3140; --line-strong:#3c4557; --text:#eceef2; --muted:#a7b1c0;
-  --accent:#7aa2ff; --accent-ink:#080d1a; --accent-weak:#1d2a47; --ok:#4fd39a; --ok-weak:#122b21;
-  --mid:#efbe55; --mid-weak:#2f2714; --low:#98a2b3; --low-weak:#202633; --bad:#ff8a7f; --bad-weak:#331a12;
-  --chip:#222836; --hover:#1f2532; --focus:rgba(122,162,255,.35); --shadow:none;
+  --bg:#0b0e11; --panel:#181a20; --line:#2b3139; --line-strong:#474d57; --text:#eaecef; --muted:#9aa3ae;
+  --accent:#fcd535; --accent-surface:#fcd535; --accent-ink:#14161a; --accent-weak:#2e2812;
+  --ok:#2ebd85; --ok-weak:#11291f; --mid:#f0b90b; --mid-weak:#2e2610;
+  --low:#8a94a3; --low-weak:#1f242c; --bad:#f6465d; --bad-weak:#2f151c;
+  --chip:#2b3139; --hover:#1e2329; --focus:rgba(252,213,53,.3); --shadow:none;
   color-scheme:dark;
 }
 *{box-sizing:border-box}
@@ -35,7 +40,11 @@ header{position:sticky;top:0;z-index:20;background:var(--panel);border-bottom:1p
 .brand small{font-weight:500;color:var(--muted);font-size:12px}
 .tabs{display:flex;gap:2px;background:var(--chip);border-radius:9px;padding:3px}
 .tabs button{border:0;background:transparent;padding:5px 12px;border-radius:7px;cursor:pointer;font-weight:600;color:var(--muted)}
-.tabs button.on{background:var(--panel);color:var(--text);box-shadow:var(--shadow)}
+.tabs button.on{background:var(--panel);color:var(--accent);box-shadow:var(--shadow)}
+/* «Ключи» без ключей — то, куда надо зайти первым делом */
+.tabs button.hot{color:var(--accent-ink);background:var(--accent-surface)}
+.tabs button.hot .tcount{color:var(--accent-ink);opacity:.8}
+.tabs button.hot::before{content:"● ";font-size:9px;vertical-align:2px}
 .tcount{font-size:12px;color:var(--muted);font-weight:600}
 .hchips{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto;align-items:center}
 .hchip{font-size:12px;padding:3px 9px;border-radius:999px;background:var(--chip);color:var(--muted);
@@ -91,8 +100,17 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 
 .reggroup{display:flex;justify-content:space-between;align-items:center;padding:6px 10px 4px;font-size:11px;
   text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:700;position:sticky;top:0;background:var(--panel)}
 .reggroup span button{font-size:11px;text-transform:none;letter-spacing:0}
-.reg{display:flex;gap:8px;padding:4px 10px;cursor:pointer;align-items:flex-start}
-.reg:hover{background:var(--hover)}
+.regrow{display:flex;align-items:flex-start;gap:6px;padding-right:8px}
+.regrow:hover{background:var(--hover)}
+.reg{display:flex;gap:8px;padding:4px 10px;cursor:pointer;align-items:flex-start;flex:1;min-width:0}
+.cityx{border:1px solid var(--line-strong);background:transparent;color:var(--muted);border-radius:99px;
+  padding:2px 9px;font-size:12px;cursor:pointer;white-space:nowrap;margin-top:4px}
+.cityx:hover{color:var(--text);border-color:var(--accent)}
+.cityx.on{background:var(--accent-weak);border-color:var(--accent);color:var(--accent)}
+.citylist{display:flex;flex-wrap:wrap;gap:2px 10px;padding:4px 10px 8px 32px;background:var(--hover)}
+.city{display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;padding:2px 0}
+.city.off{opacity:.45;cursor:default}
+.reg .c.picked{color:var(--accent)}
 .reg input{margin-top:3px}
 .reg .n{font-weight:500}
 .reg .c{font-size:13px;color:var(--muted)}
@@ -116,7 +134,7 @@ details.adv[open] summary::before{content:"▾ "}
 .btn{border:1px solid var(--line-strong);background:var(--panel);border-radius:8px;padding:7px 12px;cursor:pointer;font-weight:600;white-space:nowrap}
 .btn:hover{background:var(--hover)}
 .btn:disabled{opacity:.5;cursor:not-allowed}
-.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);width:100%;padding:10px}
+.btn.primary{background:var(--accent-surface);border-color:var(--accent-surface);color:var(--accent-ink);width:100%;padding:10px;font-weight:700}
 .btn.primary:hover{filter:brightness(1.07)}
 .btn.stop{background:var(--bad-weak);border-color:var(--bad);color:var(--bad);width:100%;padding:10px}
 .btn.sm{padding:4px 10px;font-size:13px;font-weight:500}
@@ -136,7 +154,7 @@ main{min-width:0;display:flex;flex-direction:column;gap:12px}
 .pstage{font-weight:700}
 .pmeta{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
 .bar{height:6px;background:var(--chip);border-radius:99px;margin:8px 0 6px;overflow:hidden}
-.bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .3s}
+.bar i{display:block;height:100%;background:var(--accent-surface);width:0;transition:width .3s}
 .bar.done i{background:var(--ok)} .bar.err i{background:var(--bad)}
 details.log summary{cursor:pointer;font-size:13px;color:var(--muted)}
 pre#log{font:12px/1.5 var(--mono);background:var(--chip);border-radius:8px;padding:8px 10px;max-height:240px;overflow:auto;margin:6px 0 0;white-space:pre-wrap}
@@ -182,7 +200,7 @@ td.em{min-width:180px;max-width:260px}
 .s-hi{background:var(--ok-weak);color:var(--ok)} .s-mid{background:var(--mid-weak);color:var(--mid)} .s-lo{background:var(--low-weak);color:var(--low)}
 .ai{display:block;margin-top:4px;font-size:12px;font-weight:600;white-space:nowrap}
 .ai-yes{color:var(--ok)} .ai-no{color:var(--bad)}
-.new{display:inline-block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:1px 5px;border-radius:4px;background:var(--accent);color:var(--accent-ink);vertical-align:1px;margin-left:4px}
+.new{display:inline-block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:1px 5px;border-radius:4px;background:var(--accent-surface);color:var(--accent-ink);vertical-align:1px;margin-left:4px}
 .crm{display:inline-block;font-size:11px;font-weight:700;padding:1px 5px;border-radius:4px;background:var(--ok-weak);color:var(--ok);margin-left:4px}
 .badge{display:inline-block;font-size:12px;padding:1px 7px;border-radius:99px;background:var(--chip);color:var(--muted);margin:0 3px 3px 0;white-space:nowrap}
 .soc{display:inline-block;font-size:12px;font-weight:700;padding:1px 6px;border-radius:5px;margin:0 3px 3px 0;background:var(--chip);color:var(--text)}
@@ -208,7 +226,7 @@ select.st-refused,select.st-bad{background:transparent;color:var(--low)}
 .chipsrow{display:flex;gap:6px;flex-wrap:wrap;padding:8px 12px;border-bottom:1px solid var(--line)}
 .fchip{border:1px solid var(--line-strong);background:var(--panel);border-radius:99px;padding:4px 11px;font-size:13px;cursor:pointer}
 .fchip b{font-variant-numeric:tabular-nums;margin-left:3px;color:var(--muted);font-weight:600}
-.fchip.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.fchip.on{background:var(--accent-surface);border-color:var(--accent-surface);color:var(--accent-ink);font-weight:600}
 .fchip.on b{color:var(--accent-ink)}
 .fchip.run{background:var(--mid-weak);border-color:var(--mid);color:var(--mid)}
 .bulk{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 12px;background:var(--accent-weak);border-bottom:1px solid var(--line)}

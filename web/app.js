@@ -9,7 +9,7 @@ const LS_FORM = "leadgen.form.v2", LS_JOB = "leadgen.job.v1", LS_TAB = "leadgen.
 
 const S = {
   started: false, meta: null, caps: {}, user: "", auth: false, balance: null,
-  countries: new Set(["RU"]), regions: new Set(), coverage: "centers",
+  countries: new Set(["RU"]), regions: new Set(), cities: new Set(), openRegs: new Set(), coverage: "centers",
   job: null, logFrom: 0, version: -1, lastLeadsAt: 0, pollTimer: null,
   rows: [], view: [], final: false, threshold: 0.5, title: "", runId: null,
   sort: {k: "score", dir: -1}, limit: PAGE,
@@ -128,6 +128,12 @@ function renderHeader(){
   ].join("");
   $("#userBox").innerHTML = S.auth ? `<span class="muted">${esc(S.user)}</span> <button class="linkbtn" id="btnLogout">выйти</button>` : "";
   if (S.auth) $("#btnLogout").addEventListener("click", async () => { await api("/api/logout", {}).catch(() => {}); location.reload(); });
+  // золотая вкладка «Ключи», пока не подключено главное: без Serper нет карт, без Claude — ИИ-проверки
+  const keysTab = $("#tabs button[data-tab=keys]");
+  const missing = [!c.serper && "Serper", !c.ai && "Claude"].filter(Boolean);
+  keysTab.classList.toggle("hot", missing.length > 0);
+  keysTab.title = missing.length ? `Не подключено: ${missing.join(", ")} — зайди сюда первым делом`
+                                 : "Ключи API подключены";
   for (const el of $$("[data-auth]")) el.hidden = !S.auth;
   for (const el of $$("[data-crm]")) el.hidden = !c.crm.length;
 }
@@ -242,7 +248,7 @@ function spec(){
     countries: [...S.countries],
     regions: [...S.regions].filter(r => S.countries.has(r.split(":")[0])),
     coverage: S.coverage,
-    custom_cities: lines($("#custom").value, true),
+    custom_cities: [...new Set([...S.cities, ...lines($("#custom").value, true)])],
     maps_google: chk("src_maps_google"), maps_yandex: chk("src_maps_yandex"), maps_2gis: chk("src_maps_2gis"),
     web_google: chk("src_web_google"), web_yandex: chk("src_web_yandex"), web_telegram: chk("src_web_telegram"),
     crawl: chk("opt_crawl"), ai: chk("opt_ai"), legal: chk("opt_legal"), check_email: chk("opt_check_email"),
@@ -254,7 +260,7 @@ function spec(){
 }
 
 function saveForm(){
-  const f = {countries: [...S.countries], regions: [...S.regions], coverage: S.coverage};
+  const f = {countries: [...S.countries], regions: [...S.regions], cities: [...S.cities], coverage: S.coverage};
   for (const id of FIELDS) f[id] = $("#" + id).value;
   for (const id of CHECKS) f[id] = $("#" + id).checked;
   lsSet(LS_FORM, f);
@@ -266,7 +272,12 @@ function loadForm(f){
   for (const id of CHECKS) if (typeof f[id] === "boolean" && !$("#" + id).disabled) $("#" + id).checked = f[id];
   if (Array.isArray(f.countries) && f.countries.length) S.countries = new Set(f.countries.filter(c => S.meta.countries[c]));
   if (Array.isArray(f.regions)) S.regions = new Set(f.regions);
+  if (Array.isArray(f.cities)) S.cities = new Set(f.cities);
   if (f.coverage) S.coverage = f.coverage;
+}
+
+function isKnownCity(name){
+  return Object.values(S.meta.countries).some(c => c.regions.some(r => r.cities.includes(name)));
 }
 
 /* параметры прошлого поиска / автопоиска (spec с сервера) -> форма */
@@ -276,7 +287,9 @@ function specToForm(sp){
   const f = {
     sphere: sphere ? sphere.id : "", keywords: (sp.keywords || []).join("\n"), context: sp.context || "",
     minus: (sp.minus || []).filter(m => !std.includes(m)).join(", "), stdMinus: std.every(m => (sp.minus || []).includes(m)),
-    countries: sp.countries, regions: sp.regions, coverage: sp.coverage, custom: (sp.custom_cities || []).join(", "),
+    countries: sp.countries, regions: sp.regions, coverage: sp.coverage,
+    cities: (sp.custom_cities || []).filter(isKnownCity),
+    custom: (sp.custom_cities || []).filter(x => !isKnownCity(x)).join(", "),
     perQuery: String(sp.per_query ?? 20), mapsPages: String(sp.maps_pages ?? 1), apifyMax: String(sp.apify_max ?? 50),
     aiMax: String(sp.ai_max ?? 200), maxSites: String(sp.max_sites ?? 300), threshold: String(sp.threshold ?? 0.5),
   };
@@ -323,10 +336,30 @@ function initForm(){
   $("#regSearch").addEventListener("input", renderRegions);
   $("#reglist").addEventListener("change", e => {
     if (e.target.type !== "checkbox") return;
-    e.target.checked ? S.regions.add(e.target.value) : S.regions.delete(e.target.value);
-    renderRegCount(); onFormChange();
+    const city = e.target.dataset.city;
+    if (city){
+      // город и «регион целиком» — разные режимы, поэтому не складываем их
+      e.target.checked ? S.cities.add(city) : S.cities.delete(city);
+      for (const [cc, c] of Object.entries(S.meta.countries))
+        for (const r of c.regions)
+          if (r.cities.includes(city)) S.regions.delete(`${cc}:${r.name}`);
+    } else {
+      const key = e.target.value;
+      if (e.target.checked){
+        S.regions.add(key);
+        const [cc, name] = [key.split(":")[0], key.slice(key.indexOf(":") + 1)];
+        const reg = (S.meta.countries[cc].regions || []).find(r => r.name === name);
+        for (const x of (reg ? reg.cities : [])) S.cities.delete(x);
+      } else S.regions.delete(key);
+    }
+    renderRegions(); onFormChange();
   });
   $("#reglist").addEventListener("click", e => {
+    const open = e.target.closest("[data-open]");
+    if (open){
+      S.openRegs.has(open.dataset.open) ? S.openRegs.delete(open.dataset.open) : S.openRegs.add(open.dataset.open);
+      return renderRegions();
+    }
     const all = e.target.dataset.all, none = e.target.dataset.none;
     if (!all && !none) return;
     e.preventDefault();
@@ -337,7 +370,7 @@ function initForm(){
     }
     renderRegions(); onFormChange();
   });
-  $("#regClear").addEventListener("click", () => { S.regions.clear(); renderRegions(); onFormChange(); });
+  $("#regClear").addEventListener("click", () => { S.regions.clear(); S.cities.clear(); renderRegions(); onFormChange(); });
   $("#coverage").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; S.coverage = b.dataset.v; renderCoverage(); onFormChange(); });
   $("#btnStart").addEventListener("click", startJob);
   $("#btnStop").addEventListener("click", stopJob);
@@ -368,9 +401,21 @@ function renderRegions(){
       <button class="linkbtn" type="button" data-all="${cc}">все</button> · <button class="linkbtn" type="button" data-none="${cc}">снять</button></span></div>`;
     for (const r of regs){
       const key = `${cc}:${r.name}`;
-      const cities = r.cities.length > 1 ? r.cities.slice(0, 5).join(", ") + (r.cities.length > 5 ? ` +${r.cities.length - 5}` : "") : r.cities[0];
-      html += `<label class="reg"><input type="checkbox" value="${esc(key)}" ${S.regions.has(key) ? "checked" : ""}>
-        <span><span class="n">${esc(r.name)}</span><br><span class="c">${esc(cities)}</span></span></label>`;
+      const whole = S.regions.has(key);
+      const picked = r.cities.filter(x => S.cities.has(x));
+      const open = S.openRegs.has(key);
+      const sub = picked.length
+        ? `выбрано: ${esc(picked.join(", "))}`
+        : esc(r.cities.slice(0, 4).join(", ") + (r.cities.length > 4 ? ` +${r.cities.length - 4}` : ""));
+      html += `<div class="regrow">
+        <label class="reg"><input type="checkbox" value="${esc(key)}" ${whole ? "checked" : ""}>
+          <span><span class="n">${esc(r.name)}</span><br><span class="c ${picked.length ? "picked" : ""}">${sub}</span></span></label>
+        ${r.cities.length > 1 ? `<button class="cityx ${open ? "on" : ""}" type="button" data-open="${esc(key)}"
+            title="Выбрать отдельные города">${r.cities.length} ${plural(r.cities.length, "город", "города", "городов")} ${open ? "▾" : "▸"}</button>` : ""}
+      </div>`;
+      if (open) html += `<div class="citylist">` + r.cities.map(x =>
+        `<label class="city ${whole ? "off" : ""}"><input type="checkbox" data-city="${esc(x)}"
+           ${S.cities.has(x) ? "checked" : ""} ${whole ? "disabled" : ""}><span>${esc(x)}</span></label>`).join("") + `</div>`;
     }
   }
   $("#reglist").innerHTML = html || `<div class="reg muted">Ничего не нашлось — впиши город в «Свои города»</div>`;
@@ -379,7 +424,12 @@ function renderRegions(){
 
 function renderRegCount(){
   const n = [...S.regions].filter(r => S.countries.has(r.split(":")[0])).length;
-  $("#regCount").textContent = n ? `Выбрано: ${n} ${plural(n, "регион", "региона", "регионов")}` : "Регионы не выбраны — поиск по стране целиком";
+  const c = S.cities.size;
+  const parts = [];
+  if (n) parts.push(`${n} ${plural(n, "регион", "региона", "регионов")} целиком`);
+  if (c) parts.push(`${c} ${plural(c, "город", "города", "городов")} отдельно`);
+  $("#regCount").textContent = parts.length ? "Выбрано: " + parts.join(" · ")
+    : "Ничего не выбрано — поиск по стране целиком";
 }
 function renderCoverage(){ for (const b of $("#coverage").children) b.classList.toggle("on", b.dataset.v === S.coverage); }
 function onFormChange(){ saveForm(); estimate(); }

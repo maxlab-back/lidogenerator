@@ -304,7 +304,7 @@ def lead_dict(l: Lead) -> dict:
 def lead_json(l: Lead) -> dict:
     """Строка для интерфейса, пока задача идёт (до записи в базу — без id и статусов)."""
     d = lead_dict(l)
-    d.update(id=None, query=l.query, matched=l.matched_keywords, is_new=None,
+    d.update(id=None, query=l.query, matched=l.matched_keywords, is_new=None, asked=l.region_hint,
              status="", owner="", comment="", crm_id="")
     return d
 
@@ -715,7 +715,7 @@ def _run(job: Job) -> None:
     new = 0
     for l in kept:
         cid, is_new = db.upsert(lead_dict(l), job.id)
-        db.add_run_lead(job.id, cid, l.score, l.query, l.matched_keywords, is_new)
+        db.add_run_lead(job.id, cid, l.score, l.query, l.matched_keywords, is_new, l.region_hint)
     rows = db.run_rows(job.id)
     new = sum(1 for r in rows if r.get("is_new"))
     job.new_count = new
@@ -856,8 +856,14 @@ def _score(lead: Lead, profile: Profile, keep_chars: int) -> None:
         lcc, lreg = geo.locate(lead.city)
         if lreg:
             lead.country, lead.region = lcc, lreg
-    if not lead.country and any(p.startswith("+375") for p in lead.phones):
-        lead.country = "BY"
+    # телефоны честнее текста: у сайта с одними белорусскими номерами страна не RU
+    by = sum(p.startswith("+375") for p in lead.phones)
+    ru = sum(p.startswith("+7") for p in lead.phones)
+    if by and by >= ru:
+        if lead.country != "BY":
+            lead.country, lead.region, lead.city = "BY", "", ""
+    elif not lead.country and ru:
+        lead.country = "RU"
     head = " ".join([lead.name, *lead.rubrics, lead.serp_text, lead.description])
     lead.score, lead.matched_keywords, lead.reject_reason = profile.score(
         head, lead.site_text, from_maps=lead.source.split("+")[0] in ("maps", "yandex_maps", "2gis"))

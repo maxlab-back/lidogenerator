@@ -69,11 +69,37 @@ def run_universal_self_test() -> None:
         ok += passed; total += 1
         print(f"  [{'OK ' if passed else 'FAIL'}] «{head[:44]:44}» -> {score} {reason or matched}")
 
+    print("\nСамопроверка определения города:\n")
+    for name, passed, got in _city_checks():
+        ok += passed; total += 1
+        print(f"  [{'OK ' if passed else 'FAIL'}] {name:56} -> {got}")
+
     print("\nСамопроверка кредитов и запасного поиска:\n")
     for name, passed, got in _credit_checks():
         ok += passed; total += 1
         print(f"  [{'OK ' if passed else 'FAIL'}] {name:52} -> {got}")
     print(f"\nИтог: {ok}/{total} прошло.")
+
+
+def _city_checks() -> list[tuple[str, bool, object]]:
+    """Падежи и адрес сайта: из-за них федеральные сайты получали город «Москва»."""
+    from . import geo
+    from .cities import city_from_url, detect_city
+
+    pool = geo.all_cities(["RU"])
+    site = "Купить фасады и сайдинг в Переславле-Залесском с доставкой по России. Офис в Москве."
+    cases = [
+        ("город из поддомена", city_from_url("https://pereslavl-zalesskii.saiding77.ru", pool), "Переславль-Залесский"),
+        ("город из домена", city_from_url("https://yaroslavl-okna.ru", pool), "Ярославль"),
+        ("короткое название целым словом", city_from_url("https://www.tula-stroy.ru", pool), "Тула"),
+        ("чужой домен города не даёт", city_from_url("https://grandline.ru", pool), ""),
+        ("«Ростов» не выдаём за Ростов Великий", city_from_url("https://rostov.okna.ru", pool), ""),
+        ("город запроса в падеже находится", detect_city(site, "Переславль-Залесский", pool), "Переславль-Залесский"),
+        ("без подсказки берём частый город", detect_city("Москва, Москва, Ярославль", "", pool), "Москва"),
+        ("адрес сайта важнее текста", detect_city(site, "", pool, url="https://pereslavl-zalesskii.saiding77.ru"),
+         "Переславль-Залесский"),
+    ]
+    return [(name, got == want, f"{got or '—'} (ждали {want or '—'})") for name, got, want in cases]
 
 
 def _credit_checks() -> list[tuple[str, bool, object]]:

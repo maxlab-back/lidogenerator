@@ -32,12 +32,20 @@ def main() -> None:
     ap.add_argument("--users", action="store_true", help="список пользователей")
     ap.add_argument("--check", action="store_true",
                     help="проверить окружение, ключи и остаток кредитов и выйти")
+    ap.add_argument("--recheck-cities", action="store_true",
+                    help="пересчитать город и страну у компаний в базе по новым правилам")
+    ap.add_argument("--apply", action="store_true", help="вместе с --recheck-cities: записать изменения")
     args = ap.parse_args()
     cfg = load_config(args.config)
 
     if args.check:
         from parser.doctor import report
         sys.exit(report(cfg, port=args.port))
+
+    if args.recheck_cities:
+        from parser.doctor import recheck_cities
+        recheck_cities(cfg, apply=args.apply)
+        return
 
     if args.add_user or args.del_user or args.users:
         db = open_db(cfg)

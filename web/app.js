@@ -609,18 +609,26 @@ function nameCell(r){
     ${dom ? `<a class="site" href="${esc(site)}" target="_blank" rel="noopener noreferrer">${esc(dom)}</a>` : ""}
     ${r.description ? `<div class="desc" title="${esc(r.description)}">${esc(r.description)}</div>` : ""}`;
 }
+// «местная» — та, чей город совпал с искомым. Город не определён — значит не поручимся.
+function isLocal(r){ return !r.asked || r.city === r.asked; }
+
 function whereCell(r){
   const where = [r.region, COUNTRY[r.country]].filter(Boolean).join(" · ");
-  return `${esc(r.city || "—")}${where ? `<div class="sub">${esc(where)}</div>` : ""}${r.address ? `<div class="sub addr">${esc(r.address)}</div>` : ""}`;
+  // компания не из того города, который искали: федеральный сайт или чужой филиал
+  const alien = isLocal(r) ? ""
+    : r.city ? `<div class="alien" title="Искали в городе ${esc(r.asked)}">не ${esc(r.asked)}</div>`
+             : `<div class="alien unknown" title="Искали в городе ${esc(r.asked)}">город не определён</div>`;
+  return `${esc(r.city || "—")}${alien}${where ? `<div class="sub">${esc(where)}</div>` : ""}${r.address ? `<div class="sub addr">${esc(r.address)}</div>` : ""}`;
 }
 
 function filtered(){
   const q = $("#fText").value.trim().toLowerCase();
   const min = +$("#fScore").value, cc = $("#fCountry").value, reg = $("#fRegion").value, src = $("#fSource").value;
-  const ph = $("#fPhone").checked, em = $("#fEmail").checked, nw = $("#fNew").checked;
+  const ph = $("#fPhone").checked, em = $("#fEmail").checked, nw = $("#fNew").checked, loc = $("#fLocal").checked;
   const out = S.rows.filter(r =>
     (r.score || 0) >= min - 1e-9 && (!cc || r.country === cc) && (!reg || r.region === reg) &&
-    (!src || (r.source || "").split("+").includes(src)) && (!ph || r.phones.length) && (!em || r.emails.length) && (!nw || r.is_new) &&
+    (!src || (r.source || "").split("+").includes(src)) && (!ph || r.phones.length) && (!em || r.emails.length) &&
+    (!nw || r.is_new) && (!loc || isLocal(r)) &&
     (!q || [r.name, r.city, r.region, r.website, r.address, (r.rubrics || []).join(" "), r.emails.join(" "), r.description, r.comment].join(" ").toLowerCase().includes(q)));
   const {k, dir} = S.sort;
   out.sort((a, b) => {
@@ -667,6 +675,10 @@ function renderTable(){
   $("#none").hidden = rows.length > 0 || !S.rows.length;
   $("#more").hidden = rows.length <= S.limit;
   $("#shown").textContent = `${rows.length} из ${S.rows.length}`;
+  const alien = S.rows.filter(r => !isLocal(r)).length;
+  $("#fLocalBox").hidden = !alien;
+  if (alien) $("#fLocalBox").lastChild.textContent =
+    ` только из искомого города (${S.rows.length - alien} из ${S.rows.length})`;
   for (const th of $$("#results th.sort")) th.querySelector(".arr").textContent = th.dataset.k === S.sort.k ? (S.sort.dir < 0 ? "↓" : "↑") : "";
 }
 
@@ -674,7 +686,7 @@ function bindResults(){
   const rerender = () => { S.limit = PAGE; renderTable(); };
   $("#fScore").addEventListener("input", () => { $("#fScoreV").textContent = Math.round($("#fScore").value * 100); rerender(); });
   $("#fText").addEventListener("input", rerender);
-  for (const id of ["#fCountry", "#fRegion", "#fSource", "#fPhone", "#fEmail", "#fNew"]) $(id).addEventListener("change", rerender);
+  for (const id of ["#fCountry", "#fRegion", "#fSource", "#fPhone", "#fEmail", "#fNew", "#fLocal"]) $(id).addEventListener("change", rerender);
   $("#btnMore").addEventListener("click", () => { S.limit += PAGE; renderTable(); });
   $("#results thead").addEventListener("click", e => {
     const th = e.target.closest("th.sort"); if (!th) return;

@@ -193,9 +193,9 @@ def enrich_one(lead: Lead, timeout: int, max_pages: int, user_agent: str,
     if not lead.name:
         lead.name = _site_name(home_soup) or _domain_name(lead.website)
 
-    # город: для лидов из карт (2ГИС) уже задан — не трогаем; для сайтов определяем по тексту
+    # город: у лидов из карт уже задан — не трогаем; для сайтов смотрим адрес сайта и текст
     if not lead.city:
-        lead.city = detect_city(text_raw, lead.region_hint, cities)
+        lead.city = detect_city(text_raw, lead.region_hint, cities, url=lead.website)
 
     if keep_text:
         lead.site_text = text[:60000]

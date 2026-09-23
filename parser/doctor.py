@@ -147,3 +147,55 @@ def report(cfg: dict, port: int = 8765, network: bool = True) -> int:
     else:
         print("Итог: всё на месте.")
     return 1 if broken else 0
+
+
+def recheck_cities(cfg: dict, apply: bool = False) -> dict:
+    """Пересчитать город и страну у компаний в базе по новым правилам.
+
+    Город берём из адреса сайта (`yaroslavl.saiding-market.ru`) — но только у тех,
+    у кого нет адреса из карт: карточка с адресом точнее поддомена. Страну правим по
+    телефонам: у сайта с белорусскими номерами не может быть страны RU.
+    """
+    import json
+
+    from . import geo
+    from .cities import city_from_url
+    from .config import ROOT
+    from .db import DB
+
+    p = Path((cfg.get("universal") or {}).get("db") or "output/leads.db")
+    db = DB(p if p.is_absolute() else ROOT / p)
+    pool = geo.all_cities(["RU", "BY"])
+    changed = []
+    with db.lock:
+        rows = db.conn.execute("SELECT id, name, city, country, region, address, website, phones "
+                               "FROM companies").fetchall()
+    for r in rows:
+        fields = {}
+        if not r["address"]:
+            city = city_from_url(r["website"] or "", pool)
+            if city and city != r["city"]:
+                cc, reg = geo.locate(city)
+                fields.update(city=city, country=cc or r["country"], region=reg or r["region"])
+        phones = json.loads(r["phones"] or "[]")
+        by = sum(x.startswith("+375") for x in phones)
+        ru = sum(x.startswith("+7") for x in phones)
+        if by and by >= ru and r["country"] != "BY":
+            fields["country"] = "BY"
+            if r["city"] and geo.locate(r["city"])[0] == "RU":
+                fields.update(city="", region="")
+        if fields:
+            changed.append((r["id"], r["name"], dict(r), fields))
+            if apply:
+                db.update_fields(r["id"], fields)
+                db.log(r["id"], "система", "город", "пересчёт: "
+                       + ", ".join(f"{k}={v or '—'}" for k, v in fields.items()))
+    print(f"Компаний в базе: {len(rows)}. Требуют правки: {len(changed)}")
+    for _, name, was, now in changed[:20]:
+        diff = ", ".join(f"{k}: {was.get(k) or '—'} -> {v or '—'}" for k, v in now.items())
+        print(f"  {name[:30]:32} {diff}")
+    if changed and not apply:
+        print("\nЭто разбор без изменений. Применить: python app.py --recheck-cities --apply")
+    elif apply:
+        print("Изменения записаны в базу.")
+    return {"total": len(rows), "changed": len(changed)}

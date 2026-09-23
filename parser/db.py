@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 CREATE TABLE IF NOT EXISTS run_leads (
   run_id TEXT, company_id INTEGER, score REAL, query TEXT DEFAULT '', matched TEXT DEFAULT '[]',
-  is_new INTEGER DEFAULT 0, PRIMARY KEY (run_id, company_id)
+  is_new INTEGER DEFAULT 0, asked TEXT DEFAULT '', PRIMARY KEY (run_id, company_id)
 );
 CREATE INDEX IF NOT EXISTS ix_run_leads_company ON run_leads(company_id);
 CREATE TABLE IF NOT EXISTS history (
@@ -143,6 +143,15 @@ class DB:
             self.conn.executescript(SCHEMA)
             self.conn.commit()
         self._columns = [r[1] for r in self.conn.execute("PRAGMA table_info(companies)")]
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Догоняем схему в базах, созданных прошлыми версиями."""
+        with self.lock:
+            have = {r[1] for r in self.conn.execute("PRAGMA table_info(run_leads)")}
+            if "asked" not in have:
+                self.conn.execute("ALTER TABLE run_leads ADD COLUMN asked TEXT DEFAULT ''")
+                self.conn.commit()
 
     # ------------------------------------------------------------------ компании
     def _decode(self, r: sqlite3.Row | None) -> dict | None:
@@ -371,7 +380,8 @@ class DB:
                               [*allowed.values(), run_id])
             self.conn.commit()
 
-    def add_run_lead(self, run_id: str, cid: int, score: float, query: str, matched: list, is_new: bool):
+    def add_run_lead(self, run_id: str, cid: int, score: float, query: str, matched: list, is_new: bool,
+                     asked: str = ""):
         with self.lock:
             prev = self.conn.execute("SELECT is_new, score FROM run_leads WHERE run_id=? AND company_id=?",
                                      (run_id, cid)).fetchone()
@@ -379,15 +389,17 @@ class DB:
                 self.conn.execute("UPDATE run_leads SET score=?, is_new=? WHERE run_id=? AND company_id=?",
                                   (max(prev["score"] or 0, score), int(bool(prev["is_new"]) or is_new), run_id, cid))
             else:
-                self.conn.execute("INSERT INTO run_leads(run_id, company_id, score, query, matched, is_new) "
-                                  "VALUES (?,?,?,?,?,?)",
-                                  (run_id, cid, score, query, json.dumps(matched, ensure_ascii=False), int(is_new)))
+                self.conn.execute("INSERT INTO run_leads(run_id, company_id, score, query, matched, is_new, asked) "
+                                  "VALUES (?,?,?,?,?,?,?)",
+                                  (run_id, cid, score, query, json.dumps(matched, ensure_ascii=False),
+                                   int(is_new), asked))
             self.conn.commit()
 
     def run_rows(self, run_id: str) -> list[dict]:
         with self.lock:
             rows = self.conn.execute(
-                "SELECT c.*, rl.score AS run_score, rl.query AS query, rl.matched AS matched, rl.is_new AS is_new "
+                "SELECT c.*, rl.score AS run_score, rl.query AS query, rl.matched AS matched, "
+                "rl.is_new AS is_new, rl.asked AS asked "
                 "FROM run_leads rl JOIN companies c ON c.id=rl.company_id WHERE rl.run_id=? "
                 "ORDER BY rl.score DESC, c.id", (run_id,)).fetchall()
         out = []

@@ -13,7 +13,8 @@ import time
 from urllib.parse import urlparse, parse_qs, unquote
 
 import requests
-from bs4 import BeautifulSoup
+
+from ..htmlutil import parse_html
 
 # домены, которые НЕ являются сайтами компаний-лидов (соцсети, маркетплейсы, карты, справочники-агрегаторы)
 SKIP_DOMAINS = {
@@ -23,6 +24,16 @@ SKIP_DOMAINS = {
     "yell.ru", "flamp.ru", "blizko.ru", "tiu.ru", "pulscen.ru", "satom.ru",
     "dmir.ru", "regmarkets.ru", "leroymerlin.ru", "petrovich.ru", "vseinstrumenti.ru",
     "drom.ru", "youla.ru", "rusprofile.ru", "list-org.com", "spark-interfax.ru",
+    # Беларусь: карты, объявления, справочники
+    "yandex.by", "2gis.by", "kufar.by", "onliner.by", "deal.by", "relax.by", "localgo.by",
+    "avtoportal.by", "103.by", "rabota.by", "ozon.by", "wildberries.by",
+    # вакансии, справочники, отзовики, медиа, соцсети
+    "hh.ru", "rabota.ru", "superjob.ru", "profi.ru", "uslugi.yandex.ru", "orgpage.ru",
+    "spravker.ru", "cataloxy.ru", "yp.ru", "checko.ru", "zachestnyibiznes.ru", "dzen.ru",
+    "pikabu.ru", "otzovik.com", "irecommend.ru", "tiktok.com", "pinterest.com",
+    "twitter.com", "x.com", "livejournal.com", "google.ru", "google.by", "yandex.com",
+    "mail.ru", "rbc.ru", "tripadvisor.ru", "tripadvisor.com", "booking.com",
+    "prodoctorov.ru", "napopravku.ru", "lemanapro.ru", "gov.ru", "gov.by",
 }
 
 
@@ -40,51 +51,111 @@ def _is_company_site(url: str) -> bool:
     return not any(dom == s or dom.endswith("." + s) for s in SKIP_DOMAINS)
 
 
+def is_out_of_credits(r: requests.Response) -> bool:
+    """Serper отвечает 4xx с текстом про кредиты/баланс, когда лимит исчерпан."""
+    return r.status_code in (400, 401, 402, 403) and bool(
+        re.search(r"credit|balance|not enough|quota|top.?up", r.text[:500], re.I))
+
+
+def serper_balance(key: str) -> int | None:
+    """Остаток кредитов Serper (None — не удалось узнать)."""
+    try:
+        r = requests.get("https://google.serper.dev/account", headers={"X-API-KEY": key}, timeout=10)
+        r.raise_for_status()
+        return int(r.json().get("balance"))
+    except (requests.RequestException, ValueError, TypeError):
+        return None
+
+
+def search_items(backend, query: str, limit: int, gl: str = "ru") -> list[dict]:
+    """Выдача как [{link, title, snippet}]. Бэкенды без сниппетов отдают только ссылки."""
+    if hasattr(backend, "search_items"):
+        return backend.search_items(query, limit, gl)
+    return [{"link": u, "title": "", "snippet": ""} for u in backend.search(query, limit)]
+
+
 # ----------------------------------------------------------------------------
 # Бэкенды
 # ----------------------------------------------------------------------------
 class DuckDuckGoBackend:
+    """Бесплатный поиск без ключа. Капризен к темпу: при частых запросах отдаёт пустую
+    страницу или заглушку «anomaly» — это ловится и уходит в журнал, а не молчит."""
+
     name = "duckduckgo"
     HTML = "https://html.duckduckgo.com/html/"
     LITE = "https://lite.duckduckgo.com/lite/"
+    THROTTLED = ("anomaly", "unusual traffic", "are you a robot", "blocked")
 
     def __init__(self, session: requests.Session):
         self.session = session
+        self.calls = 0          # бесплатно, но счётчик нужен для паузы между запросами
+        self.last_error = ""
+        self.throttled = 0      # сколько запросов подряд упёрлись в ограничение темпа
 
-    def search(self, query: str, limit: int) -> list[str]:
-        urls = self._parse_html(query)
-        if not urls:
-            urls = self._parse_lite(query)
-        return urls[:limit]
+    def search(self, query: str, limit: int, gl: str = "ru") -> list[str]:
+        return [it["link"] for it in self.search_items(query, limit, gl)]
 
-    def _parse_html(self, query: str) -> list[str]:
+    def search_items(self, query: str, limit: int, gl: str = "ru") -> list[dict]:
+        self.calls += 1
+        items = self._items(self.HTML, query, self._parse_results)
+        if not items:
+            items = self._items(self.LITE, query, self._parse_lite)
+        if not items and self.last_error:
+            time.sleep(3)       # один вежливый повтор: чаще всего это временный троттлинг
+            items = self._items(self.HTML, query, self._parse_results)
+        if items:
+            self.throttled = 0
+        elif self.last_error:
+            self.throttled += 1
+            if self.throttled == 3:
+                self.last_error = ("DuckDuckGo ограничивает темп третий запрос подряд — выдача пустая. "
+                                   "Увеличь sources.search.request_delay в config.yaml или пополни Serper.")
+        return items[:limit]
+
+    def _items(self, url: str, query: str, parse) -> list[dict]:
         try:
-            r = self.session.post(self.HTML, data={"q": query, "kl": "ru-ru"}, timeout=20)
-            r.raise_for_status()
-        except requests.RequestException:
+            r = self.session.post(url, data={"q": query, "kl": "ru-ru"}, timeout=20)
+        except requests.RequestException as e:
+            self.last_error = f"DuckDuckGo недоступен: {e}"
             return []
-        soup = BeautifulSoup(r.text, "lxml")
-        out = []
-        for a in soup.select("a.result__a"):
-            href = a.get("href", "")
-            real = _ddg_unwrap(href)
-            if real:
-                out.append(real)
+        body = r.text[:3000].lower()
+        if r.status_code in (202, 403, 429) or any(m in body for m in self.THROTTLED):
+            self.last_error = f"DuckDuckGo ограничил темп запросов (HTTP {r.status_code}) — выдача пустая"
+            return []
+        if not r.ok:
+            self.last_error = f"DuckDuckGo HTTP {r.status_code}"
+            return []
+        out = parse(r.text)
+        if out:
+            self.last_error = ""
         return out
 
-    def _parse_lite(self, query: str) -> list[str]:
-        try:
-            r = self.session.post(self.LITE, data={"q": query, "kl": "ru-ru"}, timeout=20)
-            r.raise_for_status()
-        except requests.RequestException:
-            return []
-        soup = BeautifulSoup(r.text, "lxml")
+    @staticmethod
+    def _parse_results(html: str) -> list[dict]:
+        soup = parse_html(html)
         out = []
-        for a in soup.find_all("a", href=True):
-            href = a["href"]
-            real = _ddg_unwrap(href)
-            if real and real.startswith("http"):
-                out.append(real)
+        for a in soup.select("a.result__a"):
+            link = _ddg_unwrap(a.get("href", ""))
+            if not link:
+                continue
+            block = a.find_parent(class_="result") or a.parent
+            snippet = block.select_one(".result__snippet") if block else None
+            out.append({"link": link, "title": a.get_text(" ", strip=True),
+                        "snippet": snippet.get_text(" ", strip=True) if snippet else ""})
+        return out
+
+    @staticmethod
+    def _parse_lite(html: str) -> list[dict]:
+        soup = parse_html(html)
+        out = []
+        for a in soup.select("a.result-link") or soup.find_all("a", href=True):
+            link = _ddg_unwrap(a.get("href", ""))
+            if not link or not link.startswith("http"):
+                continue
+            row = a.find_parent("tr")
+            snippet = row.find_next("td", class_="result-snippet") if row else None
+            out.append({"link": link, "title": a.get_text(" ", strip=True),
+                        "snippet": snippet.get_text(" ", strip=True) if snippet else ""})
         return out
 
 
@@ -100,6 +171,9 @@ def _ddg_unwrap(href: str) -> str:
 
 
 class GoogleCSEBackend:
+    """Google Custom Search JSON API: 100 запросов в день бесплатно. Запасной вариант,
+    когда кончились кредиты Serper, — выдача та же гугловская, со сниппетами."""
+
     name = "google_cse"
     URL = "https://www.googleapis.com/customsearch/v1"
 
@@ -107,21 +181,40 @@ class GoogleCSEBackend:
         self.session = session
         self.key = key
         self.cx = cx
+        self.calls = 0
+        self.exhausted = False   # дневная бесплатная квота исчерпана
+        self.last_error = ""
 
-    def search(self, query: str, limit: int) -> list[str]:
-        out, start = [], 1
-        while len(out) < limit and start <= 91:
-            params = {"key": self.key, "cx": self.cx, "q": query, "num": 10, "start": start, "gl": "ru", "hl": "ru"}
+    def search(self, query: str, limit: int, gl: str = "ru") -> list[str]:
+        return [it["link"] for it in self.search_items(query, limit, gl)]
+
+    def search_items(self, query: str, limit: int, gl: str = "ru") -> list[dict]:
+        out: list[dict] = []
+        start = 1
+        while len(out) < limit and start <= 91 and not self.exhausted:
+            params = {"key": self.key, "cx": self.cx, "q": query, "num": 10, "start": start,
+                      "gl": gl, "hl": "ru"}
             try:
                 r = self.session.get(self.URL, params=params, timeout=20)
-                r.raise_for_status()
-                data = r.json()
-            except requests.RequestException:
+            except requests.RequestException as e:
+                self.last_error = f"Google CSE недоступен: {e}"
                 break
-            items = data.get("items") or []
+            if not r.ok:
+                if r.status_code in (403, 429) and re.search(r"limit|quota", r.text[:500], re.I):
+                    self.exhausted = True
+                    self.last_error = "Google CSE: бесплатные 100 запросов на сегодня кончились"
+                else:
+                    self.last_error = f"Google CSE HTTP {r.status_code}: {r.text[:150]}"
+                break
+            self.calls += 1
+            try:
+                items = (r.json().get("items") or [])
+            except ValueError:
+                break
             if not items:
                 break
-            out += [it.get("link", "") for it in items if it.get("link")]
+            out += [{"link": it.get("link", ""), "title": it.get("title", ""),
+                     "snippet": it.get("snippet", "")} for it in items if it.get("link")]
             start += 10
         return out[:limit]
 
@@ -133,25 +226,39 @@ class SerperBackend:
     def __init__(self, session: requests.Session, key: str):
         self.session = session
         self.key = key
+        self.calls = 0          # потрачено запросов (= кредитов Serper)
+        self.exhausted = False  # кредиты кончились — вызывающий переключится на бесплатный поиск
+        self.last_error = ""
 
-    def search(self, query: str, limit: int) -> list[str]:
+    def search(self, query: str, limit: int, gl: str = "ru") -> list[str]:
+        return [it["link"] for it in self.search_items(query, limit, gl)]
+
+    def search_items(self, query: str, limit: int, gl: str = "ru") -> list[dict]:
         out, page = [], 1
-        while len(out) < limit and page <= 5:
+        while len(out) < limit and page <= 5 and not self.exhausted:
             try:
                 r = self.session.post(
                     self.URL,
                     headers={"X-API-KEY": self.key, "Content-Type": "application/json"},
-                    json={"q": query, "gl": "ru", "hl": "ru", "num": 10, "page": page},
+                    json={"q": query, "gl": gl, "hl": "ru", "num": 10, "page": page},
                     timeout=20,
                 )
-                r.raise_for_status()
-                data = r.json()
             except requests.RequestException:
+                break
+            if not r.ok:
+                self.exhausted = self.exhausted or is_out_of_credits(r)
+                self.last_error = f"Serper HTTP {r.status_code}: {r.text[:150]}"
+                break
+            self.calls += 1
+            try:
+                data = r.json()
+            except ValueError:
                 break
             organic = data.get("organic") or []
             if not organic:
                 break
-            out += [o.get("link", "") for o in organic if o.get("link")]
+            out += [{"link": o["link"], "title": o.get("title", ""), "snippet": o.get("snippet", "")}
+                    for o in organic if o.get("link")]
             page += 1
         return out[:limit]
 
@@ -181,6 +288,18 @@ class YandexXmlBackend:
             out += urls
             page += 1
         return out[:limit]
+
+
+def free_backend(session: requests.Session, keys: dict, after=None):
+    """Бесплатная ступень поиска, когда платная кончилась.
+
+    Google CSE (100 запросов в день) лучше DuckDuckGo: та же выдача Google и сниппеты.
+    `after` — движок, который только что выдохся: на него же не возвращаемся.
+    """
+    used = getattr(after, "name", "")
+    if used != "google_cse" and keys.get("google_cse_key") and keys.get("google_cse_cx"):
+        return GoogleCSEBackend(session, keys["google_cse_key"], keys["google_cse_cx"])
+    return DuckDuckGoBackend(session)
 
 
 def build_backend(cfg: dict, keys: dict, session: requests.Session):

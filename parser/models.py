@@ -19,6 +19,11 @@ class Lead:
     region_hint: str = ""         # город из поискового запроса (подсказка для детекта)
     lat: Optional[float] = None
     lon: Optional[float] = None
+    rating: str = ""              # рейтинг из карт: "4.7 (57)"
+    country: str = ""             # RU / BY
+    region: str = ""              # область/край/республика
+    description: str = ""         # meta description сайта / сниппет выдачи
+    query: str = ""               # поисковый запрос, по которому нашли
 
     # заполняется классификатором
     lead_type: str = ""           # podokonnik_pvh / sandwich_otkos / ""
@@ -35,9 +40,23 @@ class Lead:
     manager: str = ""             # руководитель
     legal_address: str = ""
     dadata_matched: bool = False
+    legal_status: str = ""        # действует / ликвидирована / банкротство
+    employees: str = ""
+    revenue: str = ""
+
+    # универсальный режим: мессенджеры и ИИ-проверка
+    socials: dict = field(default_factory=dict)   # {"telegram": [url], "whatsapp": [...], ...}
+    ai_verdict: str = ""          # yes / no / ""
+    ai_type: str = ""             # производитель / магазин / каталог …
+    ai_reason: str = ""
+    ai_confidence: Optional[int] = None
+    ai_services: list[str] = field(default_factory=list)
 
     # технические поля для дедупликации
     raw_text: str = ""            # склеенный текст (имя+рубрики+сниппет сайта) для классификации
+    site_text: str = ""           # нормализованный текст сайта (универсальный режим, не выгружается)
+    serp_text: str = ""           # заголовок + сниппет из поисковой выдачи
+    reject_reason: str = ""       # почему отсеян (минус-слово и т.п.)
 
     def dedup_key(self) -> str:
         """Ключ для устранения дублей: телефон важнее всего, иначе имя+адрес."""
@@ -49,6 +68,9 @@ class Lead:
             return "site:" + _norm_domain(self.website)
         return "name:" + (self.name.lower().strip() + "|" + self.address.lower().strip())[:120]
 
+    def dedup_key_domain(self) -> str:
+        return _norm_domain(self.website)
+
     def to_row(self) -> dict:
         d = asdict(self)
         d["phones"] = ", ".join(self.phones[:8])   # для списка обзвона хватает; ограничиваем мега-ячейки
@@ -56,6 +78,8 @@ class Lead:
         d["rubrics"] = ", ".join(self.rubrics)
         d["matched_keywords"] = ", ".join(self.matched_keywords)
         d.pop("raw_text", None)
+        d.pop("site_text", None)
+        d.pop("serp_text", None)
         return d
 
 

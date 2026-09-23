@@ -130,6 +130,34 @@ output:
   csv: true                # отдельные .csv по каждому типу
   include_maybe: true      # выгружать ли "под вопросом" (ниже порога) отдельной вкладкой
 
+# ------------------------------------------------------------------
+#  Универсальный режим (веб-интерфейс, python app.py)
+# ------------------------------------------------------------------
+universal:
+  db: output/leads.db        # база лидов: копится между поисками
+  cache_days: 7              # ответы Serper/Яндекса/карт кешируются — повторный поиск без трат
+  ai:                        # ИИ-проверка сайтов и генерация запросов (нужен ANTHROPIC_API_KEY)
+    model: claude-opus-5     # дешевле: claude-sonnet-5 или claude-haiku-4-5
+    effort: low              # классификации хватает low; для генерации запросов берётся medium
+    workers: 6
+    min_score: 0.3           # ИИ смотрит только сайты с базовой релевантностью от порога
+    max_chars: 6000          # сколько текста сайта отдавать ИИ
+    price_in: 5.0            # $ за 1M входных токенов — для подсчёта расходов в интерфейсе
+    price_out: 25.0          # $ за 1M выходных токенов
+  apify:                     # карты через Apify (нужен APIFY_TOKEN)
+    yandex_maps_actor: zen-studio/yandex-maps-scraper
+    twogis_actor: m_mamaev/2gis-places-scraper   # платный актор: на бесплатном плане Apify даст 403
+    price_per_1000:          # $ за 1000 организаций — для сметы
+      yandex_maps: 6.99
+      2gis: 5.0
+  render:                    # JS-сайты через headless Chromium
+    enabled: true
+    chrome_path: ""          # пусто = найти автоматически
+    max_parallel: 3
+  proxies: []                # ["http://user:pass@host:port", ...] — ротация при обходе сайтов
+  telegram:                  # Telegram-каналы через поиск site:t.me (аккаунт не нужен)
+    max_subscribers: 50000   # крупнее — это медиа и городские паблики, а не компании
+
 # Сетевые настройки
 network:
   # реальный браузерный UA — чтобы WAF/Cloudflare не резали как бота

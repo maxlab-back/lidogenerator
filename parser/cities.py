@@ -49,8 +49,14 @@ def _city_pattern(ncity: str) -> re.Pattern:
     return re.compile(r"(?<!\w)" + re.escape(ncity))
 
 
-def detect_city(text: str, hint: str = "") -> str:
+@lru_cache(maxsize=16)
+def _norm_pool(cities: tuple[str, ...]) -> list[tuple[str, str]]:
+    return [(c, _norm(c)) for c in sorted(cities, key=len, reverse=True)]
+
+
+def detect_city(text: str, hint: str = "", cities: list[str] | None = None) -> str:
     """Определить город по тексту сайта. hint — город из поискового запроса.
+    cities — свой словарь городов (по умолчанию CITIES — РФ).
 
     Приоритет hint: если город запроса присутствует на сайте — берём его
     (на федеральных сайтах упоминается куча городов, и самый частый ≠ город компании).
@@ -58,8 +64,9 @@ def detect_city(text: str, hint: str = "") -> str:
     t = _norm(text)
     if hint and _city_pattern(_norm(hint)).search(t):
         return hint
+    pool = _NORM_CITIES if cities is None else _norm_pool(tuple(cities))
     counts: dict[str, int] = {}
-    for city, ncity in _NORM_CITIES:
+    for city, ncity in pool:
         c = len(_city_pattern(ncity).findall(t))
         if c:
             counts[city] = c

@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Лидогенератор</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+
+<!-- ===================== ВХОД ===================== -->
+<div class="login" id="login" hidden>
+  <form class="panel login-box" id="loginForm" autocomplete="on">
+    <div class="brand">🎯 Лидогенератор</div>
+    <label class="f" for="lUser">Имя</label>
+    <input type="text" id="lUser" autocomplete="username" required>
+    <label class="f" for="lPass">Пароль</label>
+    <input type="password" id="lPass" autocomplete="current-password" required>
+    <button class="btn primary" style="margin-top:14px">Войти</button>
+    <div class="login-err" id="lErr"></div>
+  </form>
+</div>
+
+<div id="appRoot" hidden>
+<header>
+  <div class="brand">🎯 Лидогенератор <small>РФ · Беларусь</small></div>
+  <nav class="tabs" id="tabs">
+    <button data-tab="search" class="on">Поиск</button>
+    <button data-tab="base">База <span class="tcount" id="baseCount"></span></button>
+    <button data-tab="auto">Автопоиск</button>
+    <button data-tab="keys">Ключи <span class="tcount" id="keysCount"></span></button>
+  </nav>
+  <div class="hchips" id="chips"></div>
+  <button class="btn sm" id="btnHistory">История</button>
+  <span class="userbox" id="userBox"></span>
+</header>
+<div class="pop panel" id="historyPop" hidden></div>
+
+<!-- ===================== ПОИСК ===================== -->
+<section class="layout" id="tab-search">
+  <aside class="panel form" id="form">
+    <div class="sec">
+      <h3>Что ищем</h3>
+      <label class="f" for="sphere">Сфера деятельности</label>
+      <select id="sphere"><option value="">— своя (без пресета) —</option></select>
+
+      <div class="lbl-row">
+        <label class="f" for="keywords">Ключевые слова / запросы</label>
+        <button class="linkbtn" id="btnSuggest" type="button" data-cap="ai">✨ Подобрать ИИ</button>
+      </div>
+      <textarea id="keywords" rows="5" placeholder="ремонт квартир под ключ&#10;отделка квартир"></textarea>
+      <div class="hint">Одна фраза на строку. Город подставляется сам. «Подобрать ИИ» допишет синонимы по сфере и контексту.</div>
+
+      <label class="f" for="context">Контекст</label>
+      <textarea id="context" rows="3" placeholder="Своя бригада, делают сметы, работают с частными клиентами"></textarea>
+      <div class="hint">Опиши, какая компания нужна. По этому описанию проверяем сайт — словами и ИИ.</div>
+
+      <label class="f" for="minus">Минус-слова</label>
+      <input type="text" id="minus" placeholder="б/у, аренда, обучение">
+      <label class="check" style="margin-top:6px"><input type="checkbox" id="stdMinus" checked>
+        <span><span class="t">Стандартные минус-слова</span> <span class="d" id="stdMinusList"></span></span></label>
+    </div>
+
+    <div class="sec">
+      <h3>Где ищем</h3>
+      <div class="countries" id="countries"></div>
+      <div class="regbox">
+        <div class="regtools"><input type="text" id="regSearch" placeholder="Найти регион или город…"></div>
+        <div class="reglist" id="reglist"></div>
+      </div>
+      <div class="regsel"><span id="regCount"></span><button class="linkbtn" id="regClear" type="button">сбросить</button></div>
+      <label class="f" style="margin-top:12px">Охват внутри региона</label>
+      <div class="seg" id="coverage">
+        <button data-v="centers" class="on" type="button">Только центры</button>
+        <button data-v="all" type="button">Все крупные города</button>
+      </div>
+      <label class="f" for="custom">Свои города</label>
+      <input type="text" id="custom" placeholder="Зеленоградск, Светлогорск">
+      <div class="hint">Через запятую. Без регионов и городов ищем по стране целиком.</div>
+    </div>
+
+    <div class="sec">
+      <h3>Источники</h3>
+      <label class="check" data-cap="serper"><input type="checkbox" id="src_maps_google" checked>
+        <span><span class="t">Google Карты</span><span class="d"> — телефон, адрес, рубрика, рейтинг</span></span></label>
+      <label class="check" data-cap="apify"><input type="checkbox" id="src_maps_yandex">
+        <span><span class="t">Яндекс Карты</span><span class="d"> — лучший охват по РФ и РБ, Apify ≈ $7 / 1000 фирм</span></span></label>
+      <label class="check" data-cap="apify"><input type="checkbox" id="src_maps_2gis">
+        <span><span class="t">2ГИС</span><span class="d"> — Apify, нужен платный план</span></span></label>
+      <label class="check"><input type="checkbox" id="src_web_google" checked>
+        <span><span class="t">Сайты из Google</span><span class="d" id="backendHint"></span></span></label>
+      <label class="check" data-cap="yandex"><input type="checkbox" id="src_web_yandex">
+        <span><span class="t">Сайты из Яндекса</span><span class="d"> — Яндекс Поиск API</span></span></label>
+      <label class="check"><input type="checkbox" id="src_web_telegram">
+        <span><span class="t">Telegram-каналы</span><span class="d"> — каналы и бизнес-аккаунты через site:t.me; чаты и СМИ отсекаем</span></span></label>
+    </div>
+
+    <div class="sec">
+      <h3>Обработка</h3>
+      <label class="check"><input type="checkbox" id="opt_crawl" checked>
+        <span><span class="t">Заходить на сайты</span><span class="d"> — почты, телефоны, мессенджеры, текст для проверки</span></span></label>
+      <label class="check" data-cap="ai"><input type="checkbox" id="opt_ai" checked>
+        <span><span class="t">ИИ-проверка по смыслу</span><span class="d" id="aiHint"> — отсекает каталоги и «не тех»</span></span></label>
+      <label class="check" data-cap="dadata"><input type="checkbox" id="opt_legal" checked>
+        <span><span class="t">Юр. данные РФ (DaData)</span><span class="d"> — ИНН, статус, штат; ликвидированные отсеиваются</span></span></label>
+      <label class="check"><input type="checkbox" id="opt_check_email" checked>
+        <span><span class="t">Проверять почты</span><span class="d"> — выкидываем адреса с несуществующим доменом</span></span></label>
+      <label class="check"><input type="checkbox" id="opt_use_cache" checked>
+        <span><span class="t">Брать из кеша</span><span class="d"> — повтор запроса за 7 дней бесплатно</span></span></label>
+      <label class="check" data-cap="telegram"><input type="checkbox" id="opt_notify">
+        <span><span class="t">Уведомить в Telegram</span><span class="d"> — о новых компаниях по окончании</span></span></label>
+
+      <details class="adv" style="margin-top:10px">
+        <summary>Тонкая настройка</summary>
+        <div class="row2" style="margin-top:8px">
+          <div><label class="f" for="perQuery">Ссылок на запрос</label>
+            <select id="perQuery"><option>10</option><option selected>20</option><option>30</option><option>50</option></select></div>
+          <div><label class="f" for="mapsPages">Страниц Google Карт</label>
+            <select id="mapsPages"><option value="1" selected>1 (~10 фирм)</option><option value="2">2 (~20)</option><option value="3">3 (~30)</option><option value="5">5 (~50)</option></select></div>
+        </div>
+        <div class="row2">
+          <div><label class="f" for="apifyMax">Фирм на город (Apify)</label>
+            <select id="apifyMax"><option>20</option><option selected>50</option><option>100</option><option>200</option><option>500</option></select></div>
+          <div><label class="f" for="aiMax">ИИ проверяет до</label>
+            <select id="aiMax"><option>50</option><option>100</option><option selected>200</option><option>500</option><option>1000</option></select></div>
+        </div>
+        <div class="row2">
+          <div><label class="f" for="maxSites">Лимит сайтов</label><input type="number" id="maxSites" min="10" max="3000" value="300"></div>
+          <div><label class="f" for="threshold">Порог «целевой»</label>
+            <select id="threshold"><option value="0.4">0.40 — шире</option><option value="0.5" selected>0.50</option><option value="0.6">0.60</option><option value="0.7">0.70 — строже</option></select></div>
+        </div>
+        <div class="row2">
+          <div><label class="f" for="creditLimit">Потолок кредитов Serper</label>
+            <input type="number" id="creditLimit" min="0" max="100000" step="10" value="0" placeholder="0 — без лимита"></div>
+          <div class="hint">Дойдя до потолка, поиск не остановится: карты отключатся, сайты дальше пойдут
+            через бесплатный поиск. Потолок сверяется между запросами, поэтому возможен перебор на один запрос.</div>
+        </div>
+      </details>
+    </div>
+
+    <div class="run">
+      <div class="estimate" id="estimate">…</div>
+      <button class="btn primary" id="btnStart" type="button">Найти лиды</button>
+      <button class="btn stop" id="btnStop" type="button" hidden>Остановить</button>
+      <button class="linkbtn schedlink" id="btnSchedule" type="button">⏰ Сохранить как автопоиск</button>
+      <div class="schedform" id="schedForm" hidden>
+        <input type="text" id="schedTitle" placeholder="Название, напр. «Автосервисы Гродно»">
+        <div class="row2">
+          <select id="schedEvery"><option value="6">каждые 6 ч</option><option value="12">каждые 12 ч</option><option value="24" selected>раз в день</option><option value="72">раз в 3 дня</option><option value="168">раз в неделю</option></select>
+          <button class="btn sm" id="btnSchedSave" type="button">Сохранить</button>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <main>
+    <section class="panel empty" id="empty">
+      <h2>Найдём компании под твою задачу</h2>
+      <p>Карты (Google, Яндекс, 2ГИС) и выдача Google и Яндекса. На каждом сайте собираем контакты и мессенджеры, ИИ проверяет, подходит ли компания. Всё найденное копится в «Базе»: там статусы, менеджеры и выгрузка в CRM.</p>
+      <div class="steps">
+        <div class="step"><b>1. Что</b><span>Сфера, ключевые слова, контекст — или «Подобрать ИИ»</span></div>
+        <div class="step"><b>2. Где</b><span>Россия и/или Беларусь, области, города</span></div>
+        <div class="step"><b>3. Поиск</b><span>Карты + сайты, контакты, ИИ-проверка</span></div>
+        <div class="step"><b>4. В работу</b><span>Статусы, менеджеры, CRM, Excel, автопоиск</span></div>
+      </div>
+    </section>
+
+    <section class="panel banner" id="viewBanner" hidden></section>
+
+    <section class="panel progress" id="progress" hidden>
+      <div class="ptop"><div class="pstage" id="pStage">…</div><div class="pmeta" id="pMeta"></div></div>
+      <div class="bar" id="pBar"><i></i></div>
+      <details class="log"><summary>Журнал</summary><pre id="log"></pre></details>
+      <div class="files" id="pFiles"></div>
+    </section>
+
+    <section class="stats" id="stats" hidden>
+      <div class="panel stat"><div class="v" id="stAll">0</div><div class="l">всего компаний</div></div>
+      <div class="panel stat"><div class="v" id="stTarget">0</div><div class="l">целевых</div></div>
+      <div class="panel stat"><div class="v" id="stNew">—</div><div class="l">впервые найдены</div></div>
+      <div class="panel stat"><div class="v" id="stPhones">0</div><div class="l">с телефоном</div></div>
+      <div class="panel stat"><div class="v" id="stEmails">0</div><div class="l">с почтой</div></div>
+    </section>
+
+    <section class="panel" id="results" hidden>
+      <div class="toolbar">
+        <input type="text" id="fText" placeholder="Фильтр: название, город, сайт…">
+        <div class="slider">Релев. от <input type="range" id="fScore" min="0" max="1" step="0.05" value="0.5"> <b id="fScoreV">50</b></div>
+        <select id="fCountry"><option value="">Все страны</option></select>
+        <select id="fRegion"><option value="">Все регионы</option></select>
+        <select id="fSource"><option value="">Все источники</option></select>
+        <label class="tcheck"><input type="checkbox" id="fPhone"> с телефоном</label>
+        <label class="tcheck"><input type="checkbox" id="fEmail"> с почтой</label>
+        <label class="tcheck"><input type="checkbox" id="fNew"> только новые</label>
+        <span class="grow"></span>
+        <span class="muted small" id="shown"></span>
+        <button class="btn sm" id="btnXlsx">Excel</button>
+        <button class="btn sm" id="btnCsv">CSV</button>
+        <button class="btn sm" id="btnCopy">Телефоны</button>
+        <span id="crmButtons"></span>
+        <button class="btn sm" id="btnToBase" hidden>В базе →</button>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr>
+            <th class="sort" data-k="name">Компания <span class="arr"></span></th>
+            <th class="sort" data-k="score">Релев. <span class="arr"></span></th>
+            <th class="sort" data-k="city">Где <span class="arr"></span></th>
+            <th>Телефоны</th><th>Почты</th><th>Мессенджеры</th>
+            <th class="sort" data-k="status">Статус <span class="arr"></span></th>
+            <th class="sort" data-k="source">Источник <span class="arr"></span></th>
+          </tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+      <div class="none" id="none" hidden>Под фильтры ничего не подходит — ослабь порог релевантности или сними галочки.</div>
+      <div class="more" id="more" hidden><button class="btn sm" id="btnMore">Показать ещё</button></div>
+    </section>
+  </main>
+</section>
+
+<!-- ===================== БАЗА ===================== -->
+<section class="wide" id="tab-base" hidden>
+  <div class="panel">
+    <div class="toolbar">
+      <input type="text" id="bText" placeholder="Поиск по базе: название, телефон, ИНН, комментарий…">
+      <select id="bCountry"><option value="">Все страны</option><option value="RU">Россия</option><option value="BY">Беларусь</option></select>
+      <select id="bRegion"><option value="">Все регионы</option></select>
+      <select id="bOwner" data-auth><option value="">Все менеджеры</option><option value="__me">Мои</option><option value="__none">Без менеджера</option></select>
+      <div class="slider">Релев. от <input type="range" id="bScore" min="0" max="1" step="0.05" value="0"> <b id="bScoreV">0</b></div>
+      <label class="tcheck"><input type="checkbox" id="bPhone"> с телефоном</label>
+      <label class="tcheck"><input type="checkbox" id="bEmail"> с почтой</label>
+      <label class="tcheck" data-crm><input type="checkbox" id="bNoCrm"> не в CRM</label>
+      <span class="grow"></span>
+      <span class="muted small" id="bShown"></span>
+      <button class="btn sm" id="bExport">Excel</button>
+    </div>
+    <div class="chipsrow" id="bStatus"></div>
+    <div class="bulk" id="bulk" hidden>
+      <b id="bulkCount"></b>
+      <select id="bulkStatus"><option value="">Сменить статус…</option></select>
+      <button class="btn sm" id="bulkMine" data-auth>Взять себе</button>
+      <span id="bulkCrm"></span>
+      <button class="btn sm" id="bulkExport">Excel</button>
+      <button class="linkbtn" id="bulkClear">снять выделение</button>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr>
+          <th class="cb"><input type="checkbox" id="bAll" title="Выделить всё загруженное"></th>
+          <th class="sort" data-k="name">Компания <span class="arr"></span></th>
+          <th class="sort" data-k="score">Релев. <span class="arr"></span></th>
+          <th class="sort" data-k="status">Статус <span class="arr"></span></th>
+          <th data-auth>Менеджер</th>
+          <th class="sort" data-k="city">Где <span class="arr"></span></th>
+          <th>Телефоны</th><th>Почты</th><th>Мессенджеры</th>
+          <th class="sort" data-k="first_seen">Найдена <span class="arr"></span></th>
+        </tr></thead>
+        <tbody id="btbody"></tbody>
+      </table>
+    </div>
+    <div class="none" id="bNone" hidden>В базе пока пусто — запусти поиск, и найденные компании появятся здесь.</div>
+    <div class="more" id="bMore" hidden><button class="btn sm" id="bMoreBtn">Показать ещё</button></div>
+  </div>
+</section>
+
+<!-- ===================== АВТОПОИСК ===================== -->
+<section class="wide" id="tab-auto" hidden>
+  <div class="panel autohead">
+    <div>
+      <h2>Автопоиск</h2>
+      <p class="muted">Сохранённые поиски запускаются сами по расписанию, пока работает сервер. Новые компании попадают в «Базу», сводка — в Telegram.</p>
+    </div>
+    <div class="tgbox"><span id="tgStatus"></span> <button class="btn sm" id="btnTgTest">Проверить Telegram</button></div>
+  </div>
+  <div id="autoList"></div>
+  <div class="panel none" id="autoEmpty" hidden>Автопоисков пока нет. Настрой поиск на вкладке «Поиск» и нажми «⏰ Сохранить как автопоиск».</div>
+</section>
+
+<section class="wide" id="tab-keys" hidden>
+  <div class="panel autohead">
+    <div>
+      <h2>Ключи API</h2>
+      <p class="muted">Вставь ключ, нажми «Сохранить и проверить» — источник заработает сразу, перезапускать сервер не нужно.
+        Ключи лежат на сервере в файле <code>.env</code>, в браузер целиком не отдаются.</p>
+    </div>
+  </div>
+  <div id="keysList"></div>
+</section>
+</div>
+
+<!-- ===================== КАРТОЧКА КОМПАНИИ ===================== -->
+<div class="drawer" id="drawer" hidden>
+  <div class="drawer-bg" id="drawerBg"></div>
+  <aside class="drawer-in panel" id="drawerBody"></aside>
+</div>
+<div class="toast" id="toast"></div>
+<script src="/app.js"></script>
+</body>
+</html>

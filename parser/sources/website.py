@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import random
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urljoin, urlparse
@@ -12,14 +13,18 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
+from ..htmlutil import parse_html
 from ..models import Lead
 from ..cities import detect_city
+from ..contacts import UNP_RE, extract_socials, merge_socials
 
 EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 # телефон из видимого текста с разделителями (высокая точность)
 TEXT_PHONE_RE = re.compile(r"(?<!\d)(?:\+7|8)[\s\-]\(?\d{3}\)?[\s\-]\d{3}[\s\-]\d{2}[\s\-]\d{2}(?!\d)")
 # телефон слитной записью без разделителей: +79991234567 / 89991234567
 SOLID_PHONE_RE = re.compile(r"(?<!\d)(?:\+7|8)\d{10}(?!\d)")
+# белорусский: +375 29 123-45-67, +375(29)1234567, 8 (029) 123-45-67, 8 0152 71-57-77
+BY_PHONE_RE = re.compile(r"(?<![\d+])(?:\+\s?375|8\s?\(?0)(?:[\s\-()]*\d){9}(?!\d)")
 # телефон из ссылки tel: (самый чистый источник)
 TEL_HREF_RE = re.compile(r"tel:\s*(\+?[\d\s\-()]{10,20})")
 # расширения файлов, ошибочно похожие на e-mail (retina-картинки logo@2x.png и т.п.)
@@ -29,16 +34,46 @@ ASSET_EXT = {"png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "ico",
 INN_RE = re.compile(r"ИНН[\s:№/]*?(\d{12}|\d{10})", re.IGNORECASE)
 
 
-def normalize_phone(raw: str) -> str:
-    """Приводит телефон к каноничному +7XXXXXXXXXX. Возвращает '' если не валиден."""
+def normalize_phone(raw: str, country: str = "") -> str:
+    """Каноничный вид: +7XXXXXXXXXX (РФ) или +375XXXXXXXXX (РБ). '' если не валиден.
+
+    Белорусский внутренний формат «8 0XX …» отличаем от российского по нулю после
+    восьмёрки: российские коды на 0 не начинаются.
+    """
     digits = re.sub(r"\D", "", raw)
+    if len(digits) == 12 and digits.startswith("375"):
+        return "+" + digits
+    if len(digits) == 11 and digits.startswith("80"):
+        return "+375" + digits[2:]
+    if len(digits) == 9 and country == "BY":
+        return "+375" + digits
     if len(digits) == 11 and digits[0] in "78":
-        digits = "7" + digits[1:]
-    elif len(digits) == 10:
-        digits = "7" + digits
-    else:
-        return ""
-    return "+" + digits
+        return "+7" + digits[1:]
+    if len(digits) == 10 and digits[0] != "0":
+        return "+7" + digits
+    return ""
+
+def extract_phones(text_raw: str, html: str = "", country: str = "") -> list[str]:
+    """Телефоны из tel:-ссылок + из текста (с разделителями, слитно, РБ) в каноничном виде."""
+    raw_phones = (TEL_HREF_RE.findall(html)
+                  + TEXT_PHONE_RE.findall(text_raw)
+                  + SOLID_PHONE_RE.findall(text_raw)
+                  + BY_PHONE_RE.findall(text_raw))
+    phones: list[str] = []
+    for raw in raw_phones:
+        n = normalize_phone(raw, country)
+        if n and n not in phones:
+            phones.append(n)
+    return phones
+
+
+def extract_emails(text_raw: str, html: str = "") -> list[str]:
+    """E-mail из видимого текста + mailto: (а не из всего HTML — иначе ловим logo@2x.png)."""
+    mailtos = re.findall(r"mailto:([^\"'?>\s]+)", html)
+    found = set(EMAIL_RE.findall(text_raw))
+    found |= {m for m in mailtos if EMAIL_RE.fullmatch(m)}
+    return sorted(e for e in found if not _is_junk_email(e))
+
 
 # ссылки на внутренние страницы, которые стоит дочитать
 INNER_HINTS = ("contact", "kontakt", "контакт", "about", "o-", "услуг", "uslug",
@@ -72,7 +107,7 @@ def _fetch(session: requests.Session, url: str, timeout: int) -> str:
 
 
 def _inner_links(html: str, base_url: str, limit: int) -> list[str]:
-    soup = BeautifulSoup(html, "lxml")
+    soup = parse_html(html)
     base_dom = urlparse(base_url).netloc
     found, seen = [], set()
     for a in soup.find_all("a", href=True):
@@ -89,7 +124,13 @@ def _inner_links(html: str, base_url: str, limit: int) -> list[str]:
     return found
 
 
-def enrich_one(lead: Lead, timeout: int, max_pages: int, user_agent: str) -> Lead:
+def enrich_one(lead: Lead, timeout: int, max_pages: int, user_agent: str,
+               keep_text: bool = False, cities: list[str] | None = None,
+               renderer=None, proxies: list[str] | None = None) -> Lead:
+    """keep_text — сохранить текст сайта в lead.site_text (для универсальной оценки);
+    cities — словарь городов для детекта (по умолчанию — города РФ из cities.py);
+    renderer — parser.render.Renderer: дорендерить JS-сайт, если главная пустая;
+    proxies — список прокси, на сайт берётся случайный."""
     if not lead.website:
         return lead
     session = requests.Session()
@@ -98,9 +139,19 @@ def enrich_one(lead: Lead, timeout: int, max_pages: int, user_agent: str) -> Lea
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
     })
+    proxy = random.choice(proxies) if proxies else ""
+    if proxy:
+        session.proxies = {"http": proxy, "https": proxy}
 
     pages_text = []
     html = _fetch(session, lead.website, timeout)
+    if renderer is not None:
+        from ..render import needs_render
+        visible = len(parse_html(html).get_text(" ", strip=True)) if html else 0
+        if needs_render(html, visible):
+            rendered = renderer.render(lead.website, proxy)
+            if rendered and len(parse_html(rendered).get_text(" ", strip=True)) > visible:
+                html = rendered
     if not html:
         return lead
     pages_text.append(html)
@@ -112,28 +163,14 @@ def enrich_one(lead: Lead, timeout: int, max_pages: int, user_agent: str) -> Lea
 
     # извлекаем видимый текст + контакты из всего HTML
     full_html = "\n".join(pages_text)
-    home_soup = BeautifulSoup(html, "lxml")
-    text_raw = BeautifulSoup(full_html, "lxml").get_text(" ")
+    home_soup = parse_html(html)
+    text_raw = parse_html(full_html).get_text(" ")
     text = _norm(text_raw)
 
     # e-mail берём из видимого текста + из mailto:-ссылок (а не из всего HTML,
     # чтобы не цеплять имена картинок вроде logo@2x.png из атрибутов src)
-    mailtos = re.findall(r"mailto:([^\"'?>\s]+)", full_html)
-    found_emails = set(EMAIL_RE.findall(text_raw))
-    found_emails |= {m for m in mailtos if EMAIL_RE.fullmatch(m)}
-    emails = sorted(e for e in found_emails if not _is_junk_email(e))
-
-    # телефоны: из tel:-ссылок + из текста (с разделителями и слитно), всё в каноничный вид
-    raw_phones = (TEL_HREF_RE.findall(full_html)
-                  + TEXT_PHONE_RE.findall(text_raw)
-                  + SOLID_PHONE_RE.findall(text_raw))
-    phones = []
-    seen_ph = set()
-    for raw in raw_phones:
-        norm = normalize_phone(raw)
-        if norm and norm not in seen_ph:
-            seen_ph.add(norm)
-            phones.append(norm)
+    emails = extract_emails(text_raw, full_html)
+    phones = extract_phones(text_raw, full_html, lead.country)
 
     for e in emails:
         if e not in lead.emails:
@@ -142,11 +179,15 @@ def enrich_one(lead: Lead, timeout: int, max_pages: int, user_agent: str) -> Lea
         if p not in lead.phones:
             lead.phones.append(p)
 
-    # ИНН из футера (для точного матча в DaData)
+    # ИНН из футера (для точного матча в DaData); для Беларуси — УНП
     if not lead.inn:
-        m = INN_RE.search(text_raw)
+        m = INN_RE.search(text_raw) or UNP_RE.search(text_raw)
         if m:
             lead.inn = m.group(1)
+
+    # мессенджеры и соцсети из ссылок
+    if keep_text:
+        lead.socials = merge_socials(lead.socials, extract_socials(full_html))
 
     # имя компании из сайта, если пусто
     if not lead.name:
@@ -154,7 +195,16 @@ def enrich_one(lead: Lead, timeout: int, max_pages: int, user_agent: str) -> Lea
 
     # город: для лидов из карт (2ГИС) уже задан — не трогаем; для сайтов определяем по тексту
     if not lead.city:
-        lead.city = detect_city(text_raw, lead.region_hint)
+        lead.city = detect_city(text_raw, lead.region_hint, cities)
+
+    if keep_text:
+        lead.site_text = text[:60000]
+        # заголовок + meta description главной — «шапка» компании для оценки релевантности
+        if not lead.description:
+            title = home_soup.title.string.strip() if home_soup.title and home_soup.title.string else ""
+            md = home_soup.find("meta", attrs={"name": "description"})
+            meta = md["content"].strip() if md and md.get("content") else ""
+            lead.description = " — ".join(x for x in (title, meta) if x)[:300]
 
     # подтверждение ниши
     has_size = any(w in text for w in SIZE_WORDS)
@@ -184,7 +234,11 @@ def _site_name(soup: BeautifulSoup) -> str:
     """
     og = soup.find("meta", attrs={"property": "og:site_name"})
     if og and og.get("content"):
-        return og["content"].strip()[:120]
+        # og:site_name бывает рекламной фразой («Сфера — динамично развивающаяся компания…»):
+        # берём часть до сильного разделителя; «ёлочки» не режем — в них обычно бренд
+        name = re.split(r"\s[–—\-]\s|[|:·]", og["content"].strip())[0].strip()
+        if name and len(name.split()) <= 6:
+            return name[:120]
     if soup.title and soup.title.string:
         t = re.split(r"\s[–—\-]\s|[|»«:▸·]", soup.title.string.strip())[0].strip()
         low = t.lower()

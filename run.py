@@ -34,8 +34,9 @@ def main() -> None:
         cfg.setdefault("sources", {}).setdefault("search", {})["backend"] = args.backend
 
     if args.self_test:
-        from parser.selftest import run_self_test
+        from parser.selftest import run_self_test, run_universal_self_test
         run_self_test(cfg)
+        run_universal_self_test()
         return
 
     run(cfg)

@@ -67,8 +67,7 @@ def _name_matches(lead_name: str, sug_value: str, data: dict) -> bool:
     return False
 
 
-def lookup(session: requests.Session, api_key: str, query: str) -> dict | None:
-    """Вернуть data лучшей организации по названию или ИНН (или None)."""
+def _suggest(session: requests.Session, api_key: str, query: str, count: int = 5) -> list[dict]:
     try:
         r = session.post(
             SUGGEST_PARTY,
@@ -77,13 +76,23 @@ def lookup(session: requests.Session, api_key: str, query: str) -> dict | None:
                 "Content-Type": "application/json",
                 "Accept": "application/json",
             },
-            json={"query": query, "count": 5},
+            json={"query": query, "count": count},
             timeout=15,
         )
         r.raise_for_status()
-        suggestions = r.json().get("suggestions") or []
+        return r.json().get("suggestions") or []
     except (requests.RequestException, ValueError):
-        return None
+        return []
+
+
+def _city_of(sug: dict) -> str:
+    a = (((sug.get("data") or {}).get("address") or {}).get("data") or {})
+    return _norm(a.get("city") or a.get("settlement") or "")
+
+
+def lookup(session: requests.Session, api_key: str, query: str) -> dict | None:
+    """Вернуть data лучшей организации по названию или ИНН (или None)."""
+    suggestions = _suggest(session, api_key, query)
     if not suggestions:
         return None
 
@@ -107,18 +116,29 @@ def _okved(data: dict) -> str:
 def enrich_one(lead, session: requests.Session, api_key: str) -> None:
     # ищем по ИНН (точно), если уже есть, иначе по названию
     by_inn = bool(lead.inn)
-    query = lead.inn or lead.name
-    if not query:
+    city = getattr(lead, "city", "") or ""
+    if by_inn:
+        sug = lookup(session, api_key, lead.inn)
+    elif not lead.name:
         return
-    sug = lookup(session, api_key, query)
+    elif city:
+        # по названию: ищем «имя + город» и принимаем, только если в этом городе ровно одна
+        # подходящая фирма. Одноимённых много («Атлант» — пять ООО в одной Калуге):
+        # угадывать нельзя, чужой ИНН в CRM хуже пустого.
+        cands = [s for s in _suggest(session, api_key, f"{lead.name} {city}", 10)
+                 if _city_of(s) == _norm(city)
+                 and _name_matches(lead.name, s.get("value", ""), s.get("data") or {})]
+        if len({(s.get("data") or {}).get("inn") for s in cands}) != 1:
+            return
+        sug = cands[0]
+    else:
+        sug = lookup(session, api_key, lead.name)
+        # защита от ложного матча: при поиске по названию требуем реальное совпадение бренда
+        if sug and not _name_matches(lead.name, sug.get("value", ""), sug.get("data") or {}):
+            return
     if not sug:
         return
     data = sug.get("data") or {}
-
-    # защита от ложного матча: при поиске по названию требуем реальное совпадение,
-    # иначе НЕ приклеиваем чужие ИНН/ОГРН/руководителя.
-    if not by_inn and not _name_matches(lead.name, sug.get("value", ""), data):
-        return
 
     lead.inn = data.get("inn", "") or lead.inn
     lead.ogrn = data.get("ogrn", "") or lead.ogrn
@@ -128,6 +148,18 @@ def enrich_one(lead, session: requests.Session, api_key: str) -> None:
     lead.manager = mgmt.get("name", "") or ""
     lead.legal_address = (data.get("address") or {}).get("value", "") or ""
     lead.dadata_matched = True
+    status = (data.get("state") or {}).get("status") or ""
+    lead.legal_status = _STATUS.get(status, status.lower())
+    if data.get("employee_count"):
+        lead.employees = str(data["employee_count"])
+    fin = data.get("finance") or {}
+    if fin.get("revenue") is not None:
+        lead.revenue = f"{fin['revenue']:,.0f} ₽".replace(",", " ") + (f" ({fin['year']})" if fin.get("year") else "")
+
+
+_STATUS = {"ACTIVE": "действует", "LIQUIDATING": "ликвидируется", "LIQUIDATED": "ликвидирована",
+           "BANKRUPT": "банкротство", "REORGANIZING": "реорганизация"}
+DEAD_STATUSES = {"ликвидирована", "ликвидируется", "банкротство"}
 
 
 def enrich_with_dadata(leads: list, api_key: str, max_workers: int = 5) -> None:
